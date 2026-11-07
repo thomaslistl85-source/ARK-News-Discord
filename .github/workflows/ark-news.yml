@@ -27,7 +27,7 @@ jobs:
           python-version: "3.12"
 
       - name: Abhaengigkeiten installieren
-        run: pip install requests
+        run: pip install requests deep-translator
 
       - name: ARK News abrufen
         env:
