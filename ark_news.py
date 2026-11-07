@@ -97,4 +97,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+if os.environ.get("TEST_DISCORD") == "1":
+    test_text = "The ARK servers are back online. A new update is available."
+    translated = translate(test_text)
 
+    result = requests.post(
+        WEBHOOK,
+        json={"content": "🧪 **ARK-News Übersetzungstest**\n\n" + translated},
+        timeout=30
+    )
+    result.raise_for_status()
+    print("Übersetzungstest an Discord gesendet:", translated)
