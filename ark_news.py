@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import requests
+from deep_translator import GoogleTranslator
 
 APP_ID = 2399830
 WEBHOOK = os.environ["DISCORD_WEBHOOK_URL"]
