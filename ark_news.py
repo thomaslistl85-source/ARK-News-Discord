@@ -67,3 +67,20 @@ STATE_FILE.write_text(
 )
 
 print("ARK-News-Prüfung abgeschlossen.")
+
+# Einmaliger Discord-Übersetzungstest
+if os.environ.get("TEST_DISCORD") == "1":
+    response = requests.post(
+        WEBHOOK,
+        json={
+            "content": (
+                "🦖 ARK News Translation Test\n"
+                "The ARK servers are back online. "
+                "A new update is available."
+            ),
+            "allowed_mentions": {"parse": []},
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    print("Discord-Testnachricht gesendet.")
