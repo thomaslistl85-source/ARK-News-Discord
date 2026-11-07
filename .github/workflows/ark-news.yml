@@ -32,7 +32,7 @@ jobs:
       - name: ARK News abrufen
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          TEST_DISCORD: "1"
+          TEST_DISCORD: "0"
         run: python ark_news.py
 
       - name: Nachrichtenstand speichern
