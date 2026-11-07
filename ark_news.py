@@ -1,52 +1,83 @@
 
 import os
+import re
 import json
 import time
+import hashlib
 from pathlib import Path
 
 import requests
+from bs4 import BeautifulSoup
 from deep_translator import GoogleTranslator
 
 
-# =====================================
-# EINSTELLUNGEN
-# =====================================
-
 APP_ID = 2399830
-
 WEBHOOK = os.environ["DISCORD_WEBHOOK_URL"]
+TEST_DISCORD = os.getenv("TEST_DISCORD", "0") == "1"
 
-STATE_FILE = Path("ark_news_state.json")
+STEAM_STATE = Path("ark_news_state.json")
+PATCH_STATE = Path("ark_patch_state.json")
 
-API = (
+STEAM_API = (
     "https://api.steampowered.com/"
     "ISteamNews/GetNewsForApp/v2/"
 )
 
-TEST_DISCORD = os.getenv("TEST_DISCORD", "0") == "1"
+PATCH_PAGES = {
+    "server": {
+        "name": "ARK ASA Server-Patchnotes",
+        "url": (
+            "https://survivetheark.com/index.php?/"
+            "forums/topic/773786-asa-server-patch-notes-"
+            "server-v966-updated-10282026/"
+        )
+    },
+    "client": {
+        "name": "ARK ASA PC-Patchnotes",
+        "url": (
+            "https://survivetheark.com/index.php?/"
+            "forums/topic/708761-asa-pc-patch-notes-"
+            "client-v947-updated-09302026/"
+        )
+    }
+}
+
+session = requests.Session()
+session.headers.update({
+    "User-Agent": "Mozilla/5.0 ARK-News-Discord/1.0"
+})
 
 
-# =====================================
-# DISCORD-NACHRICHT SENDEN
-# =====================================
+def load_state(path):
+    if not path.exists():
+        return None
+
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def save_state(path, data):
+    path.write_text(
+        json.dumps(
+            data,
+            ensure_ascii=False,
+            indent=2
+        ),
+        encoding="utf-8"
+    )
+
 
 def send_discord(message):
-    response = requests.post(
+    response = session.post(
         WEBHOOK,
         json={
-            "content": message,
+            "content": message[:2000],
             "allowed_mentions": {"parse": []}
         },
         timeout=30
     )
-
     response.raise_for_status()
-    print("Discord-Nachricht erfolgreich gesendet.")
+    print("Discord-Nachricht gesendet.")
 
-
-# =====================================
-# ÜBERSETZUNG
-# =====================================
 
 def translate(text):
     if not text:
@@ -58,44 +89,39 @@ def translate(text):
             target="de"
         )
 
-        parts = []
+        result = []
 
-        for start in range(0, len(text), 4500):
-            part = text[start:start + 4500]
-
-            translated = translator.translate(part)
-            parts.append(translated or part)
-
+        for start in range(0, len(text), 3000):
+            chunk = text[start:start + 3000]
+            result.append(
+                translator.translate(chunk) or chunk
+            )
             time.sleep(2)
 
-        return "".join(parts)
+        return "\n".join(result)
 
-    except Exception as e:
-        print("Übersetzung fehlgeschlagen:", e)
+    except Exception as error:
+        print("Übersetzung fehlgeschlagen:", error)
         return text
 
 
-# =====================================
-# ARK-NEWS ABRUFEN
-# =====================================
+def make_message(header, title, content, url):
+    prefix = f"{header}\n\n**{title}**\n\n"
+    suffix = f"\n\n🔗 Vollständige Meldung:\n{url}"
 
-def main():
+    space = max(0, 2000 - len(prefix) - len(suffix))
 
-    # Manueller Discord-Test
-    if TEST_DISCORD:
-        send_discord(
-            "🦖 **ARK-News-Bot – Funktionstest**\n\n"
-            "✅ Verbindung zu Discord erfolgreich!\n"
-            "🇩🇪 Diese Testnachricht ist auf Deutsch.\n"
-            "📢 Der ARK-News-Bot ist einsatzbereit.\n\n"
-            "Automatische Prüfung: alle 30 Minuten."
-        )
+    if len(content) > space:
+        content = content[:max(0, space - 3)] + "..."
 
-        print("Discord-Test abgeschlossen.")
+    return (prefix + content + suffix)[:2000]
 
-    # News von Steam abrufen
-    response = requests.get(
-        API,
+
+def check_steam():
+    print("Prüfe Steam-News ...")
+
+    response = session.get(
+        STEAM_API,
         params={
             "appid": APP_ID,
             "count": 20,
@@ -103,98 +129,177 @@ def main():
         },
         timeout=30
     )
-
     response.raise_for_status()
 
     news = response.json()["appnews"]["newsitems"]
+    state = load_state(STEAM_STATE)
 
-    # Bereits bekannte Nachrichten laden
-    if STATE_FILE.exists():
-        state = json.loads(
-            STATE_FILE.read_text(encoding="utf-8")
+    if state is None:
+        save_state(
+            STEAM_STATE,
+            {"seen": [item["gid"] for item in news]}
         )
+        print("Steam: Erstbestand gespeichert.")
+        return
 
-        seen = set(state.get("seen", []))
+    seen = set(state.get("seen", []))
 
-    else:
-        seen = set()
-
-        # Beim ersten Start keine alten News posten
-        seen.update(item["gid"] for item in news)
-
-        print("Erster Start: Alte News gespeichert.")
-
-    # Neue ARK-News verarbeiten
     for item in reversed(news):
-
         gid = item["gid"]
 
         if gid in seen:
             continue
 
-        title = translate(
-            item.get("title", "ARK-News")
+        title = translate(item.get("title", "ARK-News"))
+
+        raw_content = item.get("contents", "")
+        content = re.sub(r"\[/?[^\]]+\]", "", raw_content)
+        content = translate(content[:6000])
+
+        message = make_message(
+            "🦖 **Neue offizielle ARK-News**",
+            title,
+            content,
+            item.get("url", "")
         )
-
-        content = translate(
-            item.get("contents", "")
-        )
-
-        url = item.get("url", "")
-
-        header = "🦖 **Neue offizielle ARK-News**\n\n"
-        footer = f"\n\n🔗 {url}"
-        title_line = f"**{title}**\n\n"
-
-        available = (
-            2000
-            - len(header)
-            - len(title_line)
-            - len(footer)
-        )
-
-        if available < 0:
-            title = title[:150] + "..."
-            title_line = f"**{title}**\n\n"
-
-            available = (
-                2000
-                - len(header)
-                - len(title_line)
-                - len(footer)
-            )
-
-        if len(content) > available:
-            content = content[:max(0, available - 3)] + "..."
-
-        message = header + title_line + content + footer
 
         send_discord(message)
-
         seen.add(gid)
 
-        # Nachrichtenstand speichern
-        STATE_FILE.write_text(
-            json.dumps(
-                {"seen": sorted(seen)},
-                indent=2
-            ),
-            encoding="utf-8"
+        save_state(
+            STEAM_STATE,
+            {"seen": sorted(seen)}
         )
 
-        print("Veröffentlicht:", title)
+        print("Steam-News veröffentlicht:", title)
 
-    # Nachrichtenstand speichern
-    STATE_FILE.write_text(
-        json.dumps(
-            {"seen": sorted(seen)},
-            indent=2
-        ),
-        encoding="utf-8"
+
+def get_patch_text(url):
+    response = session.get(url, timeout=30)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(
+        response.text,
+        "html.parser"
     )
+
+    # Nur den ersten Forumsbeitrag auswerten.
+    post = soup.select_one(
+        "article .cPost_content, "
+        "article .ipsType_richText, "
+        ".cPost_content, "
+        ".ipsType_richText"
+    )
+
+    if post is None:
+        raise RuntimeError(
+            "Patchnotes-Inhalt nicht gefunden."
+        )
+
+    for element in post.select(
+        "script, style, blockquote"
+    ):
+        element.decompose()
+
+    text = post.get_text(
+        separator="\n",
+        strip=True
+    )
+
+    text = re.sub(r"\n{3,}", "\n\n", text)
+
+    if len(text) < 100:
+        raise RuntimeError(
+            "Patchnotes-Inhalt ist zu kurz."
+        )
+
+    return text
+
+
+def check_patchnotes():
+    print("Prüfe offizielle Patchnotes ...")
+
+    state = load_state(PATCH_STATE)
+    first_run = state is None
+
+    if first_run:
+        state = {}
+
+    for key, page in PATCH_PAGES.items():
+        try:
+            text = get_patch_text(page["url"])
+
+            digest = hashlib.sha256(
+                text.encode("utf-8")
+            ).hexdigest()
+
+            previous = state.get(key)
+
+            if previous == digest:
+                print(page["name"], "unverändert.")
+                continue
+
+            if first_run or previous is None:
+                state[key] = digest
+                save_state(PATCH_STATE, state)
+
+                print(
+                    page["name"],
+                    "erstmalig gespeichert."
+                )
+                continue
+
+            # Der erste Abschnitt enthält normalerweise
+            # die neuesten Änderungen.
+            excerpt = text[:2400]
+            translated = translate(excerpt)
+
+            message = make_message(
+                "🔧 **Offizielle ARK-Patchnotes aktualisiert**",
+                page["name"],
+                translated,
+                page["url"]
+            )
+
+            send_discord(message)
+
+            state[key] = digest
+            save_state(PATCH_STATE, state)
+
+            print(
+                "Patchnotes veröffentlicht:",
+                page["name"]
+            )
+
+        except Exception as error:
+            print(
+                "Fehler bei",
+                page["name"],
+                ":",
+                error
+            )
+
+
+def main():
+    if TEST_DISCORD:
+        send_discord(
+            "🦖 **ARK-News-Bot – Funktionstest**\n\n"
+            "✅ Discord-Verbindung funktioniert.\n"
+            "🇩🇪 Deutscher Test erfolgreich.\n"
+            "🔧 Patchnotes-Überwachung ist eingerichtet."
+        )
+
+    # Beide Quellen unabhängig prüfen.
+    try:
+        check_steam()
+    except Exception as error:
+        print("Steam-Fehler:", error)
+
+    check_patchnotes()
 
     print("ARK-News-Prüfung abgeschlossen.")
 
 
 if __name__ == "__main__":
     main()
+
