@@ -40,14 +40,24 @@ else:
         if gid in seen:
             continue
 
-        title = item["title"]
-        url = item["url"]
+       
+            title = item["title"]
+            url = item["url"]
 
-        message = (
-            "🦖 **Neue offizielle ARK-News**\n\n"
-            f"**{title}**\n\n"
-            f"🔗 {url}"
-        )
+            try:
+                title = GoogleTranslator(
+                    source="auto",
+                    target="de"
+                ).translate(title)
+            except Exception as e:
+                print(f"Übersetzung fehlgeschlagen: {e}")
+
+            message = (
+                "🦖 **Neue offizielle ARK-News**\n\n"
+                f"**{title}**\n\n"
+                f"🔗 {url}"
+            )
+
 
         result = requests.post(
             WEBHOOK,
