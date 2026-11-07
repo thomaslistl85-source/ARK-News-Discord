@@ -7,14 +7,47 @@ from pathlib import Path
 import requests
 from deep_translator import GoogleTranslator
 
-# Einstellungen
+
+# =====================================
+# EINSTELLUNGEN
+# =====================================
+
 APP_ID = 2399830
+
 WEBHOOK = os.environ["DISCORD_WEBHOOK_URL"]
+
 STATE_FILE = Path("ark_news_state.json")
 
-API = "https://api.steampowered.com/ISteamNews/GetNewsForApp/v2/"
+API = (
+    "https://api.steampowered.com/"
+    "ISteamNews/GetNewsForApp/v2/"
+)
 
-# Übersetzung
+TEST_DISCORD = os.getenv("TEST_DISCORD", "0") == "1"
+
+
+# =====================================
+# DISCORD-NACHRICHT SENDEN
+# =====================================
+
+def send_discord(message):
+    response = requests.post(
+        WEBHOOK,
+        json={
+            "content": message,
+            "allowed_mentions": {"parse": []}
+        },
+        timeout=30
+    )
+
+    response.raise_for_status()
+    print("Discord-Nachricht erfolgreich gesendet.")
+
+
+# =====================================
+# ÜBERSETZUNG
+# =====================================
+
 def translate(text):
     if not text:
         return ""
@@ -33,7 +66,6 @@ def translate(text):
             translated = translator.translate(part)
             parts.append(translated or part)
 
-            # Pause zwischen Übersetzungsanfragen
             time.sleep(2)
 
         return "".join(parts)
@@ -43,8 +75,25 @@ def translate(text):
         return text
 
 
+# =====================================
+# ARK-NEWS ABRUFEN
+# =====================================
+
 def main():
-    # Offizielle ARK-News abrufen
+
+    # Manueller Discord-Test
+    if TEST_DISCORD:
+        send_discord(
+            "🦖 **ARK-News-Bot – Funktionstest**\n\n"
+            "✅ Verbindung zu Discord erfolgreich!\n"
+            "🇩🇪 Diese Testnachricht ist auf Deutsch.\n"
+            "📢 Der ARK-News-Bot ist einsatzbereit.\n\n"
+            "Automatische Prüfung: alle 30 Minuten."
+        )
+
+        print("Discord-Test abgeschlossen.")
+
+    # News von Steam abrufen
     response = requests.get(
         API,
         params={
@@ -59,23 +108,25 @@ def main():
 
     news = response.json()["appnews"]["newsitems"]
 
-    # Bereits veröffentlichte Nachrichten laden
+    # Bereits bekannte Nachrichten laden
     if STATE_FILE.exists():
         state = json.loads(
             STATE_FILE.read_text(encoding="utf-8")
         )
+
         seen = set(state.get("seen", []))
 
     else:
         seen = set()
 
-        # Beim ersten Start alte News nicht posten
+        # Beim ersten Start keine alten News posten
         seen.update(item["gid"] for item in news)
 
-        print("Erster Start: Vorhandene News gespeichert.")
+        print("Erster Start: Alte News gespeichert.")
 
-    # Neue Nachrichten verarbeiten
+    # Neue ARK-News verarbeiten
     for item in reversed(news):
+
         gid = item["gid"]
 
         if gid in seen:
@@ -91,7 +142,6 @@ def main():
 
         url = item.get("url", "")
 
-        # Discord: maximal 2000 Zeichen
         header = "🦖 **Neue offizielle ARK-News**\n\n"
         footer = f"\n\n🔗 {url}"
         title_line = f"**{title}**\n\n"
@@ -119,26 +169,11 @@ def main():
 
         message = header + title_line + content + footer
 
-        # Nachricht an Discord senden
-        result = requests.post(
-            WEBHOOK,
-            json={
-                "content": message,
-                "allowed_mentions": {
-                    "parse": []
-                }
-            },
-            timeout=30
-        )
+        send_discord(message)
 
-        result.raise_for_status()
-
-        # Nachricht als veröffentlicht markieren
         seen.add(gid)
 
-        print("Veröffentlicht:", title)
-
-        # Nachrichtenstand direkt speichern
+        # Nachrichtenstand speichern
         STATE_FILE.write_text(
             json.dumps(
                 {"seen": sorted(seen)},
@@ -147,7 +182,9 @@ def main():
             encoding="utf-8"
         )
 
-    # Auch beim ersten Start speichern
+        print("Veröffentlicht:", title)
+
+    # Nachrichtenstand speichern
     STATE_FILE.write_text(
         json.dumps(
             {"seen": sorted(seen)},
@@ -161,4 +198,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
