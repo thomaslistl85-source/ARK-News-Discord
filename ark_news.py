@@ -44,7 +44,7 @@ PATCH_PAGES = {
 
 session = requests.Session()
 session.headers.update({
-    "User-Agent": "Mozilla/5.0 ARK-News-Discord/1.0"
+    "User-Agent": "Mozilla/5.0"
 })
 
 
@@ -52,7 +52,9 @@ def load_state(path):
     if not path.exists():
         return None
 
-    return json.loads(path.read_text(encoding="utf-8"))
+    return json.loads(
+        path.read_text(encoding="utf-8")
+    )
 
 
 def save_state(path, data):
@@ -176,6 +178,12 @@ def check_steam():
 
 def get_patch_text(url):
     response = session.get(url, timeout=30)
+
+    print("Patchnotes HTTP-Status:", response.status_code)
+    print("Tatsaechliche URL:", response.url)
+    print("Content-Type:", response.headers.get("Content-Type"))
+    print("Seitengroesse:", len(response.content))
+
     response.raise_for_status()
 
     soup = BeautifulSoup(
@@ -183,22 +191,48 @@ def get_patch_text(url):
         "html.parser"
     )
 
-    # Nur den ersten Forumsbeitrag auswerten.
-    post = soup.select_one(
-        "article .cPost_content, "
-        "article .ipsType_richText, "
-        ".cPost_content, "
-        ".ipsType_richText"
-    )
+    if soup.title:
+        print(
+            "Seitentitel:",
+            soup.title.get_text(" ", strip=True)[:200]
+        )
+    else:
+        print("Seitentitel: nicht vorhanden")
+
+    selectors = [
+        ".cPost_content",
+        ".ipsType_richText",
+        "[data-role='commentContent']",
+        "article .ipsRichText",
+        "article"
+    ]
+
+    post = None
+
+    for selector in selectors:
+        candidate = soup.select_one(selector)
+
+        if candidate:
+            candidate_text = candidate.get_text(
+                separator="\n",
+                strip=True
+            )
+
+            if len(candidate_text) >= 100:
+                post = candidate
+                print("Gefundener Selektor:", selector)
+                break
 
     if post is None:
+        print(
+            "HTML-Anfang:",
+            re.sub(r"\s+", " ", response.text[:600])
+        )
         raise RuntimeError(
             "Patchnotes-Inhalt nicht gefunden."
         )
 
-    for element in post.select(
-        "script, style, blockquote"
-    ):
+    for element in post.select("script, style"):
         element.decompose()
 
     text = post.get_text(
@@ -213,6 +247,8 @@ def get_patch_text(url):
             "Patchnotes-Inhalt ist zu kurz."
         )
 
+    print("Patchnotes-Textlaenge:", len(text))
+
     return text
 
 
@@ -226,6 +262,8 @@ def check_patchnotes():
         state = {}
 
     for key, page in PATCH_PAGES.items():
+        print("\nPrüfe:", page["name"])
+
         try:
             text = get_patch_text(page["url"])
 
@@ -242,15 +280,12 @@ def check_patchnotes():
             if first_run or previous is None:
                 state[key] = digest
                 save_state(PATCH_STATE, state)
-
                 print(
                     page["name"],
                     "erstmalig gespeichert."
                 )
                 continue
 
-            # Der erste Abschnitt enthält normalerweise
-            # die neuesten Änderungen.
             excerpt = text[:2400]
             translated = translate(excerpt)
 
@@ -285,11 +320,9 @@ def main():
         send_discord(
             "🦖 **ARK-News-Bot – Funktionstest**\n\n"
             "✅ Discord-Verbindung funktioniert.\n"
-            "🇩🇪 Deutscher Test erfolgreich.\n"
-            "🔧 Patchnotes-Überwachung ist eingerichtet."
+            "🇩🇪 Deutscher Test erfolgreich."
         )
 
-    # Beide Quellen unabhängig prüfen.
     try:
         check_steam()
     except Exception as error:
