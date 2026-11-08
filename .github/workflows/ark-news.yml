@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Abhaengigkeiten installieren
+      - name: Abhängigkeiten installieren
         run: pip install requests deep-translator beautifulsoup4
 
       - name: ARK News abrufen
@@ -37,12 +37,12 @@ jobs:
 
       - name: Nachrichtenstand speichern
         run: |
-          if [ -f ark_news_state.json ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add ark_news_state.json
-            if ! git diff --cached --quiet; then
-              git commit -m "Update ARK news state"
-              git push
-            fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add ark_news_state.json ark_patch_state.json
+
+          if ! git diff --cached --quiet; then
+            git commit -m "Update ARK news and patchnotes state"
+            git push
           fi
